@@ -1,11 +1,23 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+<head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>QuizSolver AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://esm.run/@google/genai",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0"
+  }
+}
+</script>
     <script>
       tailwind.config = {
         theme: {
@@ -13,11 +25,17 @@
             fontFamily: {
               inter: ['Inter', 'sans-serif'],
             },
-            // Add basic keyframes if needed for custom animations previously used
             animation: {
-              'accordion-down': 'accordion-down 0.2s ease-out',
-              'accordion-up': 'accordion-up 0.2s ease-out',
+              'fade-in': 'fadeIn 0.3s ease-out',
+              'slide-up': 'slideUp 0.4s ease-out',
+              'zoom-in': 'zoomIn 0.3s ease-out',
+              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
             },
+            keyframes: {
+                fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+                slideUp: { '0%': { transform: 'translateY(10px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } },
+                zoomIn: { '0%': { transform: 'scale(0.95)', opacity: '0' }, '100%': { transform: 'scale(1)', opacity: '1' } }
+            }
           },
         },
       }
@@ -27,20 +45,765 @@
         font-family: 'Inter', sans-serif;
         background-color: #f8fafc;
       }
+      /* Custom scrollbar for better aesthetics */
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-track { background: #f1f5f9; }
+      ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     </style>
-    <script type="importmap">
-    {
-      "imports": {
-        "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
-        "react/": "https://aistudiocdn.com/react@^19.2.1/",
-        "react": "https://aistudiocdn.com/react@^19.2.1",
-        "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
-        "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0"
-      }
+</head>
+<body class="text-slate-800">
+
+<div id="app" class="min-h-screen flex flex-col">
+    <!-- Content will be injected here by JS -->
+</div>
+
+<script>
+    // --- CONFIGURATION ---
+    // In a real environment, this would come from a secure source. 
+    // For this standalone file, we mock the process environment.
+    // USERS: REPLACE 'YOUR_API_KEY_HERE' WITH YOUR ACTUAL GEMINI API KEY.
+    window.process = { env: { API_KEY: 'YOUR_API_KEY_HERE' } };
+</script>
+
+<script type="module">
+    import { GoogleGenAI, Type } from "@google/genai";
+
+    // --- STATE MANAGEMENT ---
+    const state = {
+        questions: [],
+        quizMode: 'standard', // 'standard' | 'challenge'
+        timeLeft: 7200,
+        isTimeExpired: false,
+        isFinishing: false,
+        hasSubmitted: false,
+        quizResult: null,
+        unansweredIndices: [],
+        showUnansweredAlert: false,
+        timerId: null
+    };
+
+    const CONSTANTS = {
+        CHALLENGE_TIME: 7200,
+        CHALLENGE_COUNT: 50,
+        MODEL_ID: "gemini-2.5-flash"
+    };
+
+    // --- PARSER UTILS ---
+    function shuffleArray(array) {
+        const newArr = [...array];
+        for (let i = newArr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+        }
+        return newArr;
     }
-    </script>
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+
+    function parseQuizText(text) {
+        const chunks = text.split(/Soal UAS Bot, \[.*?\]/g);
+        const questions = [];
+
+        chunks.forEach((chunk, index) => {
+            if (!chunk.trim()) return;
+            const pollMatch = chunk.match(/\[\s*Poll\s*:\s*(.*?)\s*\]/s);
+            if (pollMatch) {
+                const questionText = pollMatch[1].trim();
+                const lines = chunk.split('\n');
+                const options = [];
+                let foundPoll = false;
+
+                for (const line of lines) {
+                    if (line.includes('[ Poll :')) {
+                        foundPoll = true;
+                        continue;
+                    }
+                    if (!foundPoll) continue;
+                    const trimmed = line.trim();
+                    if (trimmed) {
+                        const cleanOption = trimmed.replace(/^-\s*/, '');
+                        options.push(cleanOption);
+                    }
+                }
+
+                if (options.length > 0) {
+                    questions.push({
+                        id: `q-${index}-${Date.now()}`,
+                        questionText,
+                        options: shuffleArray(options),
+                        rawOriginal: chunk.trim(),
+                        status: 'idle'
+                    });
+                }
+            }
+        });
+        return shuffleArray(questions);
+    }
+
+    function calculateGrade(percentage) {
+        if (percentage >= 90) return { grade: 'A+', explanation: 'Excellent, outstanding achievement.', color: 'text-emerald-600' };
+        if (percentage >= 80) return { grade: 'A', explanation: 'Very good, but with minor deficiencies.', color: 'text-green-600' };
+        if (percentage >= 75) return { grade: 'A-', explanation: 'Good, with some areas for improvement.', color: 'text-lime-600' };
+        if (percentage >= 70) return { grade: 'B+', explanation: 'Quite good, still room for improvement.', color: 'text-blue-600' };
+        if (percentage >= 65) return { grade: 'B', explanation: 'Adequate, with clear weaknesses.', color: 'text-sky-600' };
+        if (percentage >= 60) return { grade: 'B-', explanation: 'Satisfactory, needs improvement.', color: 'text-cyan-600' };
+        if (percentage >= 55) return { grade: 'C+', explanation: 'Passable, meets minimum requirements.', color: 'text-yellow-600' };
+        if (percentage >= 50) return { grade: 'C', explanation: 'Pass, but with many areas needing improvement.', color: 'text-amber-600' };
+        if (percentage >= 40) return { grade: 'D', explanation: 'Unsatisfactory, significant improvement needed.', color: 'text-orange-600' };
+        return { grade: 'E', explanation: 'Fail, did not meet the passing standards.', color: 'text-red-600' };
+    }
+
+    // --- GEMINI SERVICE ---
+    // Initialize AI client lazily to pick up the key
+    function getAIClient() {
+         return new GoogleGenAI({ apiKey: window.process.env.API_KEY });
+    }
+
+    async function validateAnswer(question, selectedOptionIndex) {
+        const ai = getAIClient();
+        const selectedOptionText = question.options[selectedOptionIndex];
+        const optionsFormatted = question.options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join('\n');
+        const myAnswerFormatted = `${String.fromCharCode(65 + selectedOptionIndex)}. ${selectedOptionText}`;
+
+        const prompt = `
+Question: ${question.questionText}
+My Answer: ${myAnswerFormatted}
+Options:
+${optionsFormatted}
+
+For this question, analyze my response and give feedback based on the answer options provided.
+If my answer is correct, confirm it and explain why it is correct.
+If my answer is incorrect, identify the correct answer and explain why my answer was wrong.
+Also, provide an explanation about why the other options are incorrect.
+`;
+
+        const response = await ai.models.generateContent({
+            model: CONSTANTS.MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        isCorrect: { type: Type.BOOLEAN },
+                        correctOptionIndex: { type: Type.INTEGER },
+                        explanation: { type: Type.STRING },
+                        reasoningForIncorrect: { type: Type.STRING }
+                    },
+                    required: ["isCorrect", "correctOptionIndex", "explanation"]
+                }
+            }
+        });
+        return JSON.parse(response.text);
+    }
+
+    async function validateBatch(items) {
+        if (items.length === 0) return [];
+        const ai = getAIClient();
+        
+        const itemsPrompt = items.map((item) => {
+            const q = item.question;
+            let myAnswerFormatted = "No answer provided (Skipped)";
+            if (item.selectedOptionIndex !== undefined && item.selectedOptionIndex >= 0) {
+                myAnswerFormatted = `${String.fromCharCode(65 + item.selectedOptionIndex)}. ${q.options[item.selectedOptionIndex]}`;
+            }
+            const optionsFormatted = q.options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join('\n');
+            
+            return `ID: ${q.id}
+Question: ${q.questionText}
+My Answer: ${myAnswerFormatted}
+Options:
+${optionsFormatted}`;
+        }).join('\n\n----------------\n\n');
+
+        const prompt = `You are grading a quiz. Here are ${items.length} questions.
+For each question:
+1. If the user provided an answer, determine if it is correct.
+2. If the user did not provide an answer (Skipped), mark it as incorrect.
+3. In ALL cases, provide the correct answer index (correctOptionIndex) and a brief explanation.
+
+Questions:
+${itemsPrompt}`;
+
+        const response = await ai.models.generateContent({
+            model: CONSTANTS.MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            id: { type: Type.STRING },
+                            isCorrect: { type: Type.BOOLEAN },
+                            correctOptionIndex: { type: Type.INTEGER },
+                            explanation: { type: Type.STRING },
+                            reasoningForIncorrect: { type: Type.STRING }
+                        },
+                        required: ["id", "isCorrect", "correctOptionIndex", "explanation"]
+                    }
+                }
+            }
+        });
+        return JSON.parse(response.text);
+    }
+
+    // --- CONTROLLERS ---
+
+    window.handleFileUpload = (mode) => {
+        const text = document.getElementById('quiz-input').value;
+        if (!text.trim()) return;
+
+        let parsed = parseQuizText(text);
+        state.quizMode = mode;
+        
+        if (mode === 'challenge') {
+            parsed = parsed.slice(0, CONSTANTS.CHALLENGE_COUNT);
+            state.timeLeft = CONSTANTS.CHALLENGE_TIME;
+            state.isTimeExpired = false;
+            startTimer();
+        }
+        
+        state.questions = parsed;
+        state.hasSubmitted = false;
+        state.quizResult = null;
+        render();
+    };
+
+    window.handleFileSelect = (input) => {
+        const file = input.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('quiz-input').value = e.target.result;
+                updateUploadButtons(); // re-eval disabled state
+            };
+            reader.readAsText(file);
+        }
+    };
+
+    window.updateUploadButtons = () => {
+        const val = document.getElementById('quiz-input')?.value || '';
+        const btns = document.querySelectorAll('.upload-btn');
+        btns.forEach(b => {
+            if (!val.trim()) {
+                b.disabled = true;
+                b.classList.add('opacity-50', 'cursor-not-allowed');
+            } else {
+                b.disabled = false;
+                b.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        });
+    };
+
+    function startTimer() {
+        if (state.timerId) clearInterval(state.timerId);
+        state.timerId = setInterval(() => {
+            state.timeLeft--;
+            if (state.timeLeft <= 0) {
+                state.timeLeft = 0;
+                state.isTimeExpired = true;
+                clearInterval(state.timerId);
+                renderHeader(); // update header
+                renderQuizList(); // disable inputs
+            } else {
+                updateTimerUI();
+            }
+        }, 1000);
+    }
+
+    function updateTimerUI() {
+        const el = document.getElementById('timer-display');
+        if (el) el.innerHTML = getTimerHTML();
+    }
+
+    function getTimerHTML() {
+        const mins = Math.floor(state.timeLeft / 60);
+        const secs = state.timeLeft % 60;
+        const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+        
+        const isUrgent = state.timeLeft < 300;
+        const colorClass = (state.isTimeExpired || state.hasSubmitted) ? 'bg-slate-800 text-slate-300' : (isUrgent ? 'text-red-600 bg-red-50 animate-pulse' : 'text-slate-700 bg-slate-100');
+        
+        return `
+        <div class="flex items-center px-3 py-1.5 rounded-md font-mono font-bold text-sm md:text-lg transition-colors duration-300 ${colorClass}">
+            <i data-lucide="timer" class="w-4 h-4 mr-2"></i> ${timeStr}
+        </div>`;
+    }
+
+    window.handleSelectOption = (qId, idx) => {
+        if (state.isTimeExpired || state.hasSubmitted || state.isFinishing) return;
+        const qIndex = state.questions.findIndex(q => q.id === qId);
+        if (qIndex === -1) return;
+        
+        state.questions[qIndex].userSelectedOptionIndex = idx;
+        renderQuestionCard(state.questions[qIndex], qIndex);
+        lucide.createIcons();
+    };
+
+    window.handleCheckAnswer = async (qId) => {
+        if (state.isTimeExpired || state.hasSubmitted || state.isFinishing) return;
+        const qIndex = state.questions.findIndex(q => q.id === qId);
+        const q = state.questions[qIndex];
+        
+        if (q.userSelectedOptionIndex === undefined) return;
+
+        q.status = 'validating';
+        renderQuestionCard(q, qIndex);
+        lucide.createIcons();
+
+        try {
+            const res = await validateAnswer(q, q.userSelectedOptionIndex);
+            q.status = 'validated';
+            q.isCorrect = res.isCorrect;
+            q.correctOptionIndex = res.correctOptionIndex;
+            q.explanation = res.explanation;
+            q.reasoningForIncorrect = res.reasoningForIncorrect;
+        } catch (e) {
+            console.error(e);
+            q.status = 'error';
+        }
+        renderQuestionCard(q, qIndex);
+        lucide.createIcons();
+    };
+
+    window.handleFinishClick = () => {
+        const indices = state.questions
+            .map((q, idx) => (q.userSelectedOptionIndex === undefined ? idx : -1))
+            .filter(idx => idx !== -1);
+        
+        if (state.isTimeExpired || indices.length > 0) {
+            state.unansweredIndices = indices;
+            state.showUnansweredAlert = true;
+            renderModal();
+        } else {
+            processFinish();
+        }
+    };
+
+    window.closeModal = () => {
+        state.showUnansweredAlert = false;
+        state.quizResult = null; // if closing result
+        renderModal(); // hide
+    };
+
+    window.handleContinueAnyway = () => {
+        state.showUnansweredAlert = false;
+        renderModal();
+        processFinish();
+    };
+
+    window.handleGoBack = () => {
+        state.showUnansweredAlert = false;
+        renderModal();
+        if (state.unansweredIndices.length > 0) {
+            const el = document.getElementById(`question-${state.unansweredIndices[0]}`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    };
+
+    window.handleRestart = () => {
+        state.questions = state.questions.map(q => ({
+            ...q,
+            status: 'idle',
+            isCorrect: undefined,
+            correctOptionIndex: undefined,
+            explanation: undefined,
+            reasoningForIncorrect: undefined,
+            isSkipped: undefined,
+            userSelectedOptionIndex: undefined
+        }));
+        state.quizResult = null;
+        state.hasSubmitted = false;
+        state.isFinishing = false;
+        if (state.quizMode === 'challenge') {
+            state.timeLeft = CONSTANTS.CHALLENGE_TIME;
+            state.isTimeExpired = false;
+            startTimer();
+        }
+        render();
+    };
+    
+    window.handleReset = () => {
+        if (state.timerId) clearInterval(state.timerId);
+        state.questions = [];
+        state.quizResult = null;
+        state.hasSubmitted = false;
+        render();
+    }
+
+    async function processFinish() {
+        state.isFinishing = true;
+        renderFAB(); 
+
+        const unvalidated = state.questions.filter(q => q.status !== 'validated');
+        const answered = unvalidated.filter(q => q.userSelectedOptionIndex !== undefined);
+        const skippedIds = new Set(unvalidated.filter(q => q.userSelectedOptionIndex === undefined).map(q => q.id));
+
+        // Mark UI as validating
+        unvalidated.forEach(q => q.status = 'validating');
+        renderQuizList(); // Refresh all to show loaders
+
+        try {
+            const resultsMap = new Map();
+            if (answered.length > 0) {
+                const chunkSize = 5;
+                for (let i = 0; i < answered.length; i += chunkSize) {
+                    const chunk = answered.slice(i, i + chunkSize);
+                    const chunkPayload = chunk.map(q => ({ question: q, selectedOptionIndex: q.userSelectedOptionIndex }));
+                    try {
+                        const results = await validateBatch(chunkPayload);
+                        results.forEach(r => { if(r.id) resultsMap.set(r.id, r); });
+                    } catch(e) { console.error(e); }
+                }
+            }
+
+            // Update State
+            state.questions.forEach(q => {
+                if (resultsMap.has(q.id)) {
+                    const res = resultsMap.get(q.id);
+                    q.status = 'validated';
+                    q.isCorrect = res.isCorrect;
+                    q.isSkipped = false;
+                    q.correctOptionIndex = res.correctOptionIndex;
+                    q.explanation = res.explanation;
+                    q.reasoningForIncorrect = res.reasoningForIncorrect;
+                } else if (skippedIds.has(q.id)) {
+                    q.status = 'validated';
+                    q.isCorrect = false;
+                    q.isSkipped = true;
+                }
+            });
+
+            // Calc Score
+            const total = state.questions.length;
+            const correct = state.questions.filter(q => q.isCorrect && !q.isSkipped).length;
+            const skipped = state.questions.filter(q => q.isSkipped).length;
+            const incorrect = total - correct - skipped;
+            const score = total > 0 ? (correct/total)*100 : 0;
+
+            state.quizResult = {
+                score, correctCount: correct, incorrectCount: incorrect, skippedCount: skipped, total,
+                gradeDetails: calculateGrade(score)
+            };
+            state.hasSubmitted = true;
+
+        } catch (e) { console.error(e); }
+        
+        state.isFinishing = false;
+        if (state.timerId) clearInterval(state.timerId);
+        render(); // Full re-render to show updated cards and FAB
+        // Show result immediately? Or wait for FAB click?
+        // App logic showed result immediately in summary.
+        // Actually App.tsx sets quizResult, which triggers Modal.
+        // So we should just render();
+    }
+
+    // --- VIEW RENDERERS ---
+
+    function render() {
+        const app = document.getElementById('app');
+        app.innerHTML = `
+            ${getHeaderHTML()}
+            <main class="flex-grow container mx-auto px-4 py-8 max-w-3xl">
+                ${state.questions.length === 0 ? getUploadHTML() : getQuizListHTML()}
+            </main>
+            ${getFABHTML()}
+            <div id="modal-container"></div>
+        `;
+        renderModal(); // If any modal state is active
+        lucide.createIcons();
+    }
+
+    function renderHeader() {
+        const header = document.querySelector('header');
+        if(header) {
+            header.outerHTML = getHeaderHTML();
+            lucide.createIcons();
+        }
+    }
+    
+    function renderQuizList() {
+        const container = document.getElementById('quiz-list-container');
+        if (container) {
+            container.innerHTML = state.questions.map((q, i) => getQuestionCardHTML(q, i)).join('');
+            lucide.createIcons();
+        }
+    }
+
+    function renderQuestionCard(q, idx) {
+        const el = document.getElementById(`question-${idx}`);
+        if (el) {
+            el.outerHTML = getQuestionCardHTML(q, idx);
+        }
+    }
+
+    function renderFAB() {
+        const fab = document.getElementById('fab-container');
+        if(fab) {
+            fab.outerHTML = getFABHTML();
+            lucide.createIcons();
+        }
+    }
+
+    function renderModal() {
+        const container = document.getElementById('modal-container');
+        if (!container) return;
+        
+        if (state.quizResult) {
+            container.innerHTML = getResultModalHTML();
+        } else if (state.showUnansweredAlert) {
+            container.innerHTML = getAlertModalHTML();
+        } else {
+            container.innerHTML = '';
+        }
+        lucide.createIcons();
+    }
+
+    // --- HTML TEMPLATES ---
+
+    function getHeaderHTML() {
+        return `
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+            <div class="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2 rounded-lg shadow-sm ${state.quizMode === 'challenge' ? 'bg-rose-600' : 'bg-indigo-600'}">
+                        <i data-lucide="${state.quizMode === 'challenge' ? 'sword' : 'brain-circuit'}" class="w-5 h-5 text-white"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-lg font-bold text-slate-800 tracking-tight leading-none">QuizSolver AI</h1>
+                        ${state.quizMode === 'challenge' ? '<span class="text-[10px] font-bold text-rose-600 uppercase tracking-wider">Challenge Mode</span>' : ''}
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    ${state.quizMode === 'challenge' && state.questions.length > 0 ? `<div id="timer-display">${getTimerHTML()}</div>` : ''}
+                    ${state.questions.length > 0 ? `
+                    <button onclick="handleReset()" class="text-slate-500 hover:text-red-600 font-medium text-sm flex items-center px-3 rounded-md hover:bg-slate-50 transition-colors">
+                        <i data-lucide="rotate-ccw" class="w-4 h-4 md:mr-2"></i> <span class="hidden md:inline">Start Over</span>
+                    </button>` : ''}
+                </div>
+            </div>
+        </header>`;
+    }
+
+    function getUploadHTML() {
+        return `
+        <div class="bg-white rounded-2xl shadow-xl p-8 max-w-3xl mx-auto border border-slate-100 animate-fade-in mt-12">
+            <div class="text-center mb-8">
+                <h2 class="text-2xl font-bold text-slate-800 mb-2">Upload Quiz Data</h2>
+                <p class="text-slate-500">Paste your raw quiz text or upload a .txt file.</p>
+            </div>
+            <div class="space-y-6">
+                <div class="relative">
+                    <textarea id="quiz-input" oninput="updateUploadButtons()" class="w-full h-64 p-4 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50/50 bg-slate-50 text-sm font-mono transition-all outline-none resize-none" placeholder="Paste your quiz content here..."></textarea>
+                    <button onclick="navigator.clipboard.readText().then(t => { document.getElementById('quiz-input').value += t; updateUploadButtons(); })" class="absolute bottom-4 right-4 text-xs bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-md flex items-center shadow-sm">
+                        <i data-lucide="clipboard" class="w-3 h-3 mr-1.5"></i> Paste
+                    </button>
+                </div>
+                <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div class="flex items-center">
+                        <input type="file" id="file-upload" class="hidden" accept=".txt" onchange="handleFileSelect(this)">
+                        <button onclick="document.getElementById('file-upload').click()" class="flex items-center text-sm text-slate-600 hover:text-indigo-600 font-medium px-4 py-2 rounded-lg border border-dashed border-slate-300 hover:border-indigo-300 hover:bg-slate-50 transition-all">
+                            <i data-lucide="upload" class="w-4 h-4 mr-2"></i> Upload .txt File
+                        </button>
+                    </div>
+                    <div class="flex space-x-3">
+                        <button onclick="handleFileUpload('standard')" class="upload-btn flex items-center px-5 py-2.5 rounded-lg text-white font-medium shadow-md transition-all bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                            <i data-lucide="file-text" class="w-4 h-4 mr-2"></i> Standard Mode
+                        </button>
+                        <button onclick="handleFileUpload('challenge')" class="upload-btn flex items-center px-5 py-2.5 rounded-lg text-white font-medium shadow-md transition-all bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                            <i data-lucide="sword" class="w-4 h-4 mr-2"></i> Challenge
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function getQuizListHTML() {
+        return `
+        <div class="space-y-8 pb-32 animate-fade-in ${state.isTimeExpired || state.hasSubmitted ? 'opacity-95' : ''}">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h2 class="text-xl font-bold text-slate-800">Your Quiz</h2>
+                    <p class="text-sm text-slate-500 mt-1">${state.hasSubmitted && !state.isFinishing ? "Review your answers below" : "Answer questions and click Finish"}</p>
+                </div>
+                <span class="px-3 py-1 rounded-full text-xs font-semibold ${state.quizMode === 'challenge' ? 'bg-rose-50 text-rose-700' : 'bg-indigo-50 text-indigo-700'}">
+                    ${state.questions.length} Questions
+                </span>
+            </div>
+            <div id="quiz-list-container" class="grid gap-8">
+                ${state.questions.map((q, i) => getQuestionCardHTML(q, i)).join('')}
+            </div>
+        </div>`;
+    }
+
+    function getQuestionCardHTML(q, idx) {
+        const isIdle = q.status === 'idle';
+        const isValidating = q.status === 'validating';
+        const isValidated = q.status === 'validated';
+        const isSkipped = q.isSkipped;
+        const hasSelection = q.userSelectedOptionIndex !== undefined;
+        const disabled = state.isTimeExpired || state.hasSubmitted || state.isFinishing;
+
+        let borderClass = isSkipped ? 'border-orange-200 bg-orange-50/30' : 'border-gray-200';
+        if (isValidated && q.isCorrect) borderClass = 'border-green-200 shadow-green-50';
+        if (isValidated && !q.isCorrect && !isSkipped) borderClass = 'border-red-200 shadow-red-50';
+
+        return `
+        <div id="question-${idx}" class="bg-white rounded-xl shadow-sm border p-6 transition-all duration-300 scroll-mt-24 ${borderClass} ${disabled ? 'opacity-80' : ''}">
+            <div class="flex justify-between items-start mb-4">
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-xs font-bold px-2 py-1 rounded ${isSkipped ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-600'}">Question ${idx + 1}</span>
+                    ${isValidating ? '<span class="text-xs text-indigo-500 flex items-center"><i data-lucide="loader-2" class="w-3 h-3 animate-spin mr-1"></i> Checking...</span>' : ''}
+                    ${isSkipped ? '<span class="text-xs text-orange-600 flex items-center"><i data-lucide="alert-circle" class="w-3 h-3 mr-1"></i> Skipped</span>' : ''}
+                </div>
+            </div>
+            <h3 class="text-lg font-medium text-slate-800 mb-6 leading-relaxed">${q.questionText}</h3>
+            <div class="space-y-3">
+                ${q.options.map((opt, i) => {
+                    const isSelected = q.userSelectedOptionIndex === i;
+                    const isCorrectAnswer = q.correctOptionIndex === i;
+                    let cls = "group relative p-4 rounded-lg border text-sm transition-all duration-200 flex justify-between items-center ";
+                    let icon = '';
+
+                    if (isValidated) {
+                        if (isCorrectAnswer) {
+                            cls += "bg-green-50 border-green-400 text-green-900 ring-1 ring-green-200 font-medium";
+                            icon = '<i data-lucide="check-circle" class="w-5 h-5 text-green-600 ml-2"></i>';
+                        } else if (isSelected && !q.isCorrect) {
+                            cls += "bg-red-50 border-red-300 text-red-900 ring-1 ring-red-100 font-medium";
+                            icon = '<i data-lucide="x-circle" class="w-5 h-5 text-red-500 ml-2"></i>';
+                        } else {
+                            cls += "bg-white border-gray-100 text-gray-400 opacity-60";
+                        }
+                    } else {
+                        if (isSelected) cls += "bg-indigo-50 border-indigo-400 text-indigo-900 ring-1 ring-indigo-200 shadow-sm";
+                        else if (!disabled && !isValidating) cls += "bg-white border-slate-200 text-slate-700 hover:border-indigo-300 hover:bg-slate-50 cursor-pointer";
+                        else cls += "bg-white border-slate-200 text-slate-400 cursor-not-allowed";
+                    }
+
+                    const circleCls = (isSelected || (isValidated && isCorrectAnswer)) ? 'border-current bg-current text-white' : 'border-slate-300 text-slate-400 group-hover:border-indigo-400 group-hover:text-indigo-500';
+
+                    return `
+                    <div onclick="${(!disabled && !isValidated && !isValidating) ? `handleSelectOption('${q.id}', ${i})` : ''}" class="${cls}">
+                        <div class="flex items-start">
+                            <span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mr-3 border transition-colors flex-shrink-0 mt-0.5 ${circleCls}">${String.fromCharCode(65 + i)}</span>
+                            <span class="flex-1 mr-2">${opt}</span>
+                        </div>
+                        ${icon}
+                    </div>`;
+                }).join('')}
+            </div>
+            ${!isValidated && state.quizMode === 'standard' ? `
+            <div class="mt-6 flex justify-end">
+                <button onclick="handleCheckAnswer('${q.id}')" ${disabled || !hasSelection || isValidating ? 'disabled' : ''} class="flex items-center px-5 py-2 rounded-lg text-sm font-medium transition-all ${hasSelection && !isValidating && !disabled ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}">
+                    ${isValidating ? '<i data-lucide="loader-2" class="w-4 h-4 mr-2 animate-spin"></i> Checking...' : '<i data-lucide="play-circle" class="w-4 h-4 mr-2"></i> Check Answer'}
+                </button>
+            </div>` : ''}
+            
+            ${isValidated ? `
+            <div class="mt-6 p-5 rounded-lg border animate-slide-up ${isSkipped ? 'bg-orange-50 border-orange-100' : (q.isCorrect ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100')}">
+                <h4 class="text-sm font-bold mb-2 flex items-center ${isSkipped ? 'text-orange-800' : (q.isCorrect ? 'text-green-800' : 'text-red-800')}">
+                    ${isSkipped ? '<i data-lucide="alert-circle" class="w-4 h-4 mr-2"></i> Skipped' : (q.isCorrect ? '<i data-lucide="check-circle" class="w-4 h-4 mr-2"></i> Correct!' : '<i data-lucide="x-circle" class="w-4 h-4 mr-2"></i> Incorrect')}
+                </h4>
+                ${isSkipped ? '<p class="text-sm text-orange-800">You did not answer this question.</p>' : `
+                    <p class="text-sm leading-relaxed ${q.isCorrect ? 'text-green-800' : 'text-red-800'}">${q.explanation || ''}</p>
+                    ${q.reasoningForIncorrect ? `<div class="mt-3 pt-3 border-t ${q.isCorrect ? 'border-green-200' : 'border-red-200'}"><h5 class="text-xs font-bold uppercase tracking-wider mb-1 ${q.isCorrect ? 'text-green-700' : 'text-red-700'}">Analysis</h5><p class="text-sm ${q.isCorrect ? 'text-green-800' : 'text-red-800'} opacity-90">${q.reasoningForIncorrect}</p></div>` : ''}
+                `}
+            </div>` : ''}
+        </div>`;
+    }
+
+    function getFABHTML() {
+        if (state.questions.length === 0 || (state.quizResult && !state.hasSubmitted)) return ''; // Hide if no questions or strange state
+        if (state.quizResult && state.hasSubmitted) {
+             return `<div id="fab-container" class="fixed bottom-8 right-8 z-30 animate-zoom-in">
+                 <button onclick="state.quizResult && (state.quizResult = state.quizResult) && renderModal()" class="px-6 py-3 rounded-full shadow-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center space-x-2 transition-all hover:scale-105">
+                    <i data-lucide="file-bar-chart" class="w-5 h-5"></i> <span>Review Score</span>
+                 </button>
+             </div>`;
+        }
+        
+        return `<div id="fab-container" class="fixed bottom-8 right-8 z-30 animate-zoom-in">
+             <button onclick="handleFinishClick()" ${state.isFinishing ? 'disabled' : ''} class="px-8 py-4 rounded-full shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 font-bold flex items-center space-x-3 text-lg ${state.isTimeExpired ? 'bg-white text-red-600 border-2 border-red-500 shadow-red-200 animate-pulse' : 'bg-slate-900 hover:bg-black text-white'} ${state.isFinishing ? 'cursor-not-allowed opacity-90' : ''}">
+                ${state.isFinishing ? '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> <span>Grading...</span>' : '<i data-lucide="check-square" class="w-5 h-5"></i> <span>Finish Quiz</span>'}
+             </button>
+        </div>`;
+    }
+
+    function getAlertModalHTML() {
+        return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in">
+            <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 animate-zoom-in">
+                <div class="flex items-center space-x-3 mb-4 ${state.isTimeExpired ? 'text-red-600' : 'text-orange-600'}">
+                    <i data-lucide="alert-triangle" class="w-8 h-8"></i>
+                    <h3 class="text-xl font-bold text-slate-800">${state.isTimeExpired ? 'Time Expired!' : 'Unanswered Questions'}</h3>
+                </div>
+                ${state.isTimeExpired ? 
+                    `<p class="text-slate-600 mb-2">Time is up!</p><p class="text-sm text-red-500 font-medium">All ${state.unansweredIndices.length} unanswered questions will be marked incorrect.</p>` : 
+                    `<p class="text-slate-600 mb-2">You skipped <strong>${state.unansweredIndices.length}</strong> questions.</p><div class="text-sm text-slate-500 mb-6 bg-slate-50 p-3 rounded-lg max-h-32 overflow-y-auto">${state.unansweredIndices.map(i => '#'+(i+1)).join(', ')}</div><p class="text-sm text-slate-500 mb-6">These will be marked <strong>incorrect</strong>.</p>`
+                }
+                <div class="flex gap-3">
+                    ${!state.isTimeExpired ? `<button onclick="handleGoBack()" class="flex-1 py-2.5 px-4 bg-white border border-slate-300 text-slate-700 rounded-lg font-semibold hover:bg-slate-50">Go Back</button>` : ''}
+                    <button onclick="handleContinueAnyway()" class="flex-1 py-2.5 px-4 text-white rounded-lg font-semibold shadow-md ${state.isTimeExpired ? 'bg-red-600 hover:bg-red-700' : 'bg-orange-600 hover:bg-orange-700'}">${state.isTimeExpired ? 'Submit & Grade' : 'Continue Anyway'}</button>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function getResultModalHTML() {
+        const r = state.quizResult;
+        return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in overflow-y-auto">
+            <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden animate-zoom-in my-auto">
+                <div class="bg-indigo-600 p-6 text-center text-white relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-full h-full opacity-10 bg-[radial-gradient(circle_at_center,_white,_transparent)]"></div>
+                    <div class="relative z-10">
+                        <i data-lucide="trophy" class="w-12 h-12 mx-auto mb-3 text-indigo-100"></i>
+                        <h2 class="text-2xl font-bold">Quiz Complete!</h2>
+                    </div>
+                </div>
+                <div class="p-8">
+                    <div class="flex items-center justify-between mb-8">
+                        <div class="text-center flex-1 border-r border-slate-100">
+                            <span class="block text-5xl font-extrabold ${r.gradeDetails.color}">${r.gradeDetails.grade}</span>
+                            <span class="text-sm text-slate-400 font-medium mt-1">Grade</span>
+                        </div>
+                        <div class="text-center flex-1">
+                            <span class="block text-4xl font-bold text-slate-800">${Math.round(r.score)}%</span>
+                            <span class="text-sm text-slate-400 font-medium mt-1">Total Score</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-50 rounded-xl p-4 mb-6 border border-slate-100">
+                        <p class="text-center font-medium ${r.gradeDetails.color}">"${r.gradeDetails.explanation}"</p>
+                    </div>
+                    <div class="space-y-3 mb-8">
+                        <div class="flex justify-between p-3 bg-green-50 rounded-lg border border-green-100">
+                            <div class="flex items-center text-green-700 font-medium"><i data-lucide="check-circle" class="w-5 h-5 mr-3"></i> Correct</div>
+                            <span class="font-bold text-green-700">${r.correctCount}</span>
+                        </div>
+                        <div class="flex justify-between p-3 bg-red-50 rounded-lg border border-red-100">
+                            <div class="flex items-center text-red-700 font-medium"><i data-lucide="x-circle" class="w-5 h-5 mr-3"></i> Incorrect</div>
+                            <span class="font-bold text-red-700">${r.incorrectCount}</span>
+                        </div>
+                        <div class="flex justify-between p-3 bg-orange-50 rounded-lg border border-orange-100">
+                            <div class="flex items-center text-orange-700 font-medium"><i data-lucide="alert-circle" class="w-5 h-5 mr-3"></i> Skipped</div>
+                            <span class="font-bold text-orange-700">${r.skippedCount}</span>
+                        </div>
+                    </div>
+                    <div class="flex gap-3">
+                        <button onclick="handleRestart()" class="flex-1 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-semibold hover:bg-slate-50 flex items-center justify-center"><i data-lucide="rotate-ccw" class="w-4 h-4 mr-2"></i> Start Over</button>
+                        <button onclick="closeModal()" class="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 shadow-lg shadow-indigo-200">Review Answers</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // --- INIT ---
+    render();
+</script>
+
+</body>
 </html>

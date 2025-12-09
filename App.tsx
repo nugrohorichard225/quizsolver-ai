@@ -287,29 +287,29 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 flex flex-col font-inter">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
-        <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className={`p-2 rounded-lg shadow-sm ${quizMode === 'challenge' ? 'bg-rose-600' : 'bg-indigo-600'}`}>
-                {quizMode === 'challenge' ? <Sword className="w-5 h-5 text-white" /> : <BrainCircuit className="w-5 h-5 text-white" />}
+        <div className="max-w-4xl mx-auto px-4 h-14 md:h-16 flex items-center justify-between">
+          <div className="flex items-center space-x-2 md:space-x-3">
+            <div className={`p-1.5 md:p-2 rounded-lg shadow-sm ${quizMode === 'challenge' ? 'bg-rose-600' : 'bg-indigo-600'}`}>
+                {quizMode === 'challenge' ? <Sword className="w-4 h-4 md:w-5 md:h-5 text-white" /> : <BrainCircuit className="w-4 h-4 md:w-5 md:h-5 text-white" />}
             </div>
             <div>
-                <h1 className="text-lg font-bold text-slate-800 tracking-tight leading-none">QuizSolver AI</h1>
-                {quizMode === 'challenge' && <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider">Challenge Mode</span>}
+                <h1 className="text-base md:text-lg font-bold text-slate-800 tracking-tight leading-none">QuizSolver AI</h1>
+                {quizMode === 'challenge' && <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider block md:inline">Challenge Mode</span>}
             </div>
           </div>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 md:space-x-4">
              {quizMode === 'challenge' && questions.length > 0 && (
-                 <div className={`flex items-center px-3 py-1.5 rounded-md font-mono font-bold text-lg transition-colors duration-300
+                 <div className={`flex items-center px-2 py-1 md:px-3 md:py-1.5 rounded-md font-mono font-bold text-sm md:text-lg transition-colors duration-300
                     ${(isTimeExpired || hasSubmitted || isFinishing)
                         ? 'bg-slate-800 text-slate-300 border border-slate-700'
                         : (timeLeft < 300 ? 'text-red-600 bg-red-50 animate-pulse' : 'text-slate-700 bg-slate-100')
                     }
                  `}>
                      {(hasSubmitted || isFinishing) && !isTimeExpired ? (
-                        <CheckSquare className="w-4 h-4 mr-2 text-emerald-400" />
+                        <CheckSquare className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2 text-emerald-400" />
                      ) : (
-                        <Timer className="w-4 h-4 mr-2" />
+                        <Timer className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" />
                      )}
                      {formatTime(timeLeft)}
                  </div>
@@ -318,9 +318,11 @@ const App: React.FC = () => {
              {questions.length > 0 && (
                 <button 
                   onClick={handleReset}
-                  className="text-slate-500 hover:text-red-600 font-medium text-sm flex items-center px-3 py-1.5 rounded-md hover:bg-slate-50 transition-colors"
+                  className="text-slate-500 hover:text-red-600 font-medium text-xs md:text-sm flex items-center px-2 py-1.5 md:px-3 rounded-md hover:bg-slate-50 transition-colors"
+                  title="Start Over"
                 >
-                    <RotateCcw className="w-4 h-4 mr-2" /> Start Over
+                    <RotateCcw className="w-4 h-4 md:mr-2" /> 
+                    <span className="hidden md:inline">Start Over</span>
                 </button>
              )}
           </div>
@@ -328,32 +330,32 @@ const App: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-grow container mx-auto px-4 py-8 max-w-3xl">
+      <main className="flex-grow container mx-auto px-4 py-6 md:py-8 max-w-3xl">
         {questions.length === 0 ? (
-          <div className="mt-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="mt-6 md:mt-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <FileUpload onTextLoaded={handleTextLoaded} />
             <div className="mt-8 text-center">
                 <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Powered by Gemini 2.5 Flash</p>
             </div>
           </div>
         ) : (
-          <div className={`space-y-8 pb-32 transition-opacity duration-500 ${(isTimeExpired || hasSubmitted) ? 'opacity-95' : ''}`}>
-             <div className="flex justify-between items-center mb-6">
+          <div className={`space-y-6 md:space-y-8 pb-32 transition-opacity duration-500 ${(isTimeExpired || hasSubmitted) ? 'opacity-95' : ''}`}>
+             <div className="flex justify-between items-center mb-4 md:mb-6">
                 <div>
-                    <h2 className="text-xl font-bold text-slate-800">Your Quiz</h2>
-                    <p className="text-sm text-slate-500 mt-1">
+                    <h2 className="text-lg md:text-xl font-bold text-slate-800">Your Quiz</h2>
+                    <p className="text-xs md:text-sm text-slate-500 mt-1">
                         {(hasSubmitted && !isFinishing) 
                            ? "Review your answers below" 
-                           : "Answer questions and click Finish to get your grade"
+                           : "Answer questions and click Finish"
                         }
                     </p>
                 </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-semibold ${quizMode === 'challenge' ? 'bg-rose-50 text-rose-700' : 'bg-indigo-50 text-indigo-700'}`}>
+                <span className={`px-2 py-1 md:px-3 rounded-full text-[10px] md:text-xs font-semibold ${quizMode === 'challenge' ? 'bg-rose-50 text-rose-700' : 'bg-indigo-50 text-indigo-700'}`}>
                     {questions.length} Questions
                 </span>
              </div>
 
-             <div className="grid gap-8">
+             <div className="grid gap-6 md:gap-8">
               {questions.map((q, index) => (
                 <QuizCard 
                     key={q.id} 
@@ -372,12 +374,12 @@ const App: React.FC = () => {
 
       {/* Floating Action Button for Finish / View Results */}
       {questions.length > 0 && !quizResult && (
-        <div className="fixed bottom-8 right-8 z-30 animate-in zoom-in duration-300">
+        <div className="fixed bottom-6 right-6 md:bottom-8 md:right-8 z-30 animate-in zoom-in duration-300">
              {!hasSubmitted && (
                 <button
                     onClick={handleFinishClick}
                     disabled={isFinishing}
-                    className={`px-8 py-4 rounded-full shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 font-bold flex items-center space-x-3 text-lg
+                    className={`px-6 py-3 md:px-8 md:py-4 rounded-full shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 font-bold flex items-center space-x-2 md:space-x-3 text-base md:text-lg
                         ${isTimeExpired 
                             ? 'bg-white text-red-600 border-2 border-red-500 shadow-red-200 animate-pulse ring-4 ring-red-100' 
                             : 'bg-slate-900 hover:bg-black text-white'}
@@ -439,7 +441,7 @@ const App: React.FC = () => {
                       </>
                   )}
 
-                  <div className="flex space-x-3">
+                  <div className="flex flex-col sm:flex-row gap-3 sm:space-x-3">
                       {!isTimeExpired && (
                           <button 
                             onClick={handleGoBackToUnanswered}

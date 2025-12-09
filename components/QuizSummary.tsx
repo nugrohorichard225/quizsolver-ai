@@ -10,8 +10,8 @@ interface QuizSummaryProps {
 
 const QuizSummary: React.FC<QuizSummaryProps> = ({ result, onClose, onRestart }) => {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-300">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-300">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-300 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-300 my-auto">
         <div className="bg-indigo-600 p-6 text-center text-white relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-full opacity-10 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white to-transparent"></div>
           <div className="relative z-10">
@@ -21,16 +21,16 @@ const QuizSummary: React.FC<QuizSummaryProps> = ({ result, onClose, onRestart })
           </div>
         </div>
 
-        <div className="p-8">
+        <div className="p-6 md:p-8">
             <div className="flex items-center justify-between mb-8">
                 <div className="text-center flex-1 border-r border-slate-100">
-                    <span className={`block text-5xl font-extrabold ${result.gradeDetails.color}`}>
+                    <span className={`block text-4xl md:text-5xl font-extrabold ${result.gradeDetails.color}`}>
                         {result.gradeDetails.grade}
                     </span>
                     <span className="text-sm text-slate-400 font-medium mt-1">Grade</span>
                 </div>
                 <div className="text-center flex-1">
-                     <span className="block text-4xl font-bold text-slate-800">
+                     <span className="block text-3xl md:text-4xl font-bold text-slate-800">
                         {Math.round(result.score)}%
                     </span>
                     <span className="text-sm text-slate-400 font-medium mt-1">Total Score</span>
@@ -72,16 +72,16 @@ const QuizSummary: React.FC<QuizSummaryProps> = ({ result, onClose, onRestart })
                 </div>
             </div>
 
-            <div className="flex space-x-3">
+            <div className="flex flex-col sm:flex-row gap-3">
                 <button 
                     onClick={onRestart}
-                    className="flex-1 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-semibold hover:bg-slate-50 transition-colors flex items-center justify-center"
+                    className="flex-1 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-semibold hover:bg-slate-50 transition-colors flex items-center justify-center order-2 sm:order-1"
                 >
                     <RotateCcw className="w-4 h-4 mr-2" /> Start Over
                 </button>
                 <button 
                     onClick={onClose}
-                    className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200"
+                    className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200 order-1 sm:order-2"
                 >
                     Review Answers
                 </button>
