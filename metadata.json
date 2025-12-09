@@ -1,0 +1,5 @@
+{
+  "name": "QuizSolver AI",
+  "description": "An interactive tool that parses quiz files and uses Gemini AI to validate your answers, explaining why you are right or wrong.",
+  "requestFramePermissions": []
+}
